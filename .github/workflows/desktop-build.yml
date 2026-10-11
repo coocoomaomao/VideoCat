@@ -1,0 +1,54 @@
+name: Desktop Build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "electron/**"
+      - "build/**"
+      - "scripts/**"
+      - "index.html"
+      - "styles.css"
+      - "app.js"
+      - ".github/workflows/desktop-build.yml"
+permissions:
+  contents: write
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm install
+      - run: npm test
+      - run: npm run check
+      - run: npm run dist:win
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          New-Item -ItemType Directory -Force -Path release-files | Out-Null
+          $installer = Get-ChildItem -Path dist -Filter "*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Windows installer not found" }
+          Copy-Item $installer.FullName -Destination "release-files/VideoCat-Setup-v$version.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoCat-Windows
+          path: release-files/*.exe
+          if-no-files-found: error
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = "v$version"
+          $asset = "release-files/VideoCat-Setup-v$version.exe"
+          if (gh release view $tag --repo "${{ github.repository }}" 2>$null) {
+            gh release upload $tag $asset --clobber --repo "${{ github.repository }}"
+          } else {
+            gh release create $tag $asset --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "VideoCat 视频压缩猫 v$version" --notes "Windows x64 安装版。输入目标 MB，VideoCat 自动计算码率并用本地 FFmpeg 两遍压缩尽量贴近目标体积；支持批量和分辨率限制，原视频不覆盖。"
+          }
